@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Game Ular</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            font-family: courier;
+            text-transform: uppercase;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+
+        .game-layout {
+            display: flex;
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        #game-container {
+            border: 2px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            background-color: #e0e0e0;
+        }
+
+        #game-canvas {
+            border-radius: 8px;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        #high-score {
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        #score-display {
+            margin-bottom: 10px;
+        }
+
+        #game-over-message {
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        #reset-button {
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            font-family: courier;
+            color: #f0f0f0;
+            background-color: #555;
+        }
+
+        #reset-button:hover {
+            color: #f0f0f0;
+            background-color: #333;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Game Ular</h1>
+    <div class="game-layout">
+        <div id="game-container">
+            <canvas id="game-canvas" width="400" height="400"></canvas>
+        </div>
+        <div class="sidebar">
+            <p id="high-score">Skor Tertinggi: 0</p>
+            <p id="score-display">Skor: <span id="score">0</span></p>
+            <div id="game-over-message" style="display: none;">
+                <h2>Game Over!</h2>
+                <p>Skor Akhir: <span id="final-score">0</span></p>
+                <button id="reset-button">Main Lagi</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const highScoreDisplay = document.getElementById('high-score');
+        const gameOverMessage = document.getElementById('game-over-message');
+        const finalScoreDisplay = document.getElementById('final-score');
+        const resetButton = document.getElementById('reset-button');
+        const gridSize = {{ grid_size }};
+        const tileSize = canvas.width / gridSize;
+        let gameInterval;
+        let gameSpeed = 250;
+        let currentDirection = 'right';
+        let autoPlay = false;
+        let snakePositions = [];
+        let highScore = localStorage.getItem('snakeHighScore') || 0;
+        highScoreDisplay.textContent = `Skor Tertinggi: ${highScore}`;
+
+        function drawGrid() {
+            ctx.strokeStyle = '#ccc';
+            for (let i = 0; i < gridSize; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * tileSize, 0);
+                ctx.lineTo(i * tileSize, canvas.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * tileSize);
+                ctx.lineTo(canvas.width, i * tileSize);
+                ctx.stroke();
+            }
+        }
+
+        function drawSnake(snake) {
+            snake.forEach((segment, index) => {
+                const x = segment[0] * tileSize;
+                const y = segment[1] * tileSize;
+                const cornerRadius = 5;
+
+                ctx.fillStyle = index === snake.length - 1 ? 'lime' : 'green';
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1;
+
+                ctx.beginPath();
+                ctx.moveTo(x + cornerRadius, y);
+                ctx.lineTo(x + tileSize - cornerRadius, y);
+                ctx.arcTo(x + tileSize, y, x + tileSize, y + cornerRadius, cornerRadius);
+                ctx.lineTo(x + tileSize, y + tileSize - cornerRadius);
+                ctx.arcTo(x + tileSize, y + tileSize, x + tileSize - cornerRadius, y + tileSize, cornerRadius);
+                ctx.lineTo(x + cornerRadius, y + tileSize);
+                ctx.arcTo(x, y + tileSize, x, y + tileSize - cornerRadius, cornerRadius);
+                ctx.lineTo(x, y + cornerRadius);
+                ctx.arcTo(x, y, x + cornerRadius, y, cornerRadius);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            });
+        }
+
+        function drawFood(food) {
+            const x = (food[0] + 0.5) * tileSize;
+            const y = (food[1] + 0.5) * tileSize;
+            const radius = tileSize / 2 - 2;
+            const pulseSpeed = 0.05;
+            const pulseAmount = 0.2;
+            const currentPulse = Math.sin(Date.now() * pulseSpeed) * pulseAmount + 1;
+            const pulsatingRadius = radius * currentPulse;
+
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.arc(x, y, pulsatingRadius, 0, Math.PI * 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function updateGame() {
+            let directionToSend = currentDirection;
+            if (autoPlay) {
+                const head = snakePositions[snakePositions.length - 1];
+                const nextX = head[0] + getDirectionVector(currentDirection)[0];
+                const nextY = head[1] + getDirectionVector(currentDirection)[1];
+
+                function isSafe(x, y) {
+                    return x >= 0 && x < gridSize && y >= 0 && y < gridSize && !isBody(x, y);
+                }
+
+                function isBody(x, y) {
+                    return snakePositions.slice(0, -1).some(segment => segment[0] === x && segment[1] === y);
+                }
+
+                function getDirectionVector(dir) {
+                    switch (dir) {
+                        case 'up': return [0, -1];
+                        case 'down': return [0, 1];
+                        case 'left': return [-1, 0];
+                        case 'right': return [1, 0];
+                    }
+                }
+
+                if (!isSafe(nextX, nextY)) {
+                    switch (currentDirection) {
+                        case 'up': directionToSend = 'right'; break;
+                        case 'down': directionToSend = 'left'; break;
+                        case 'left': directionToSend = 'up'; break;
+                        case 'right': directionToSend = 'down'; break;
+                    }
+                }
+            }
+
+            fetch('/update', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    direction: directionToSend
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.game_over) {
+                    clearInterval(gameInterval);
+                    finalScoreDisplay.textContent = data.score;
+                    gameOverMessage.style.display = 'block';
+                    autoPlay = false;
+                    if (data.score > highScore) {
+                        highScore = data.score;
+                        localStorage.setItem('snakeHighScore', highScore);
+                        highScoreDisplay.textContent = `Skor Tertinggi: ${highScore}`;
+                    }
+                } else {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#f0f0f0';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    drawSnake(data.snake);
+                    drawFood(data.food);
+                    scoreDisplay.textContent = data.score;
+                    snakePositions = data.snake;
+
+                    if (data.speed !== gameSpeed) {
+                        gameSpeed = data.speed;
+                        clearInterval(gameInterval);
+                        gameInterval = setInterval(updateGame, gameSpeed);
+                    }
+                    if (!autoPlay) {
+                        currentDirection = directionToSend;
+                    }
+                }
+            });
+        }
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter') {
+                autoPlay = !autoPlay;
+                console.log('Auto play:', autoPlay);
+            } else if (!autoPlay) {
+                switch (event.key) {
+                    case 'ArrowUp':
+                        currentDirection = 'up';
+                        break;
+                    case 'ArrowDown':
+                        currentDirection = 'down';
+                        break;
+                    case 'ArrowLeft':
+                        currentDirection = 'left';
+                        break;
+                    case 'ArrowRight':
+                        currentDirection = 'right';
+                        break;
+                }
+            }
+        });
+
+        resetButton.addEventListener('click', function() {
+            fetch('/reset', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                gameOverMessage.style.display = 'none';
+                currentDirection = 'right';
+                clearInterval(gameInterval);
+                gameSpeed = 250;
+                autoPlay = false;
+                score = 0; // Reset skor di klien juga (opsional, server juga reset)
+                scoreDisplay.textContent = score;
+                startGame();
+            });
+        });
+
+        function startGame() {
+            gameInterval = setInterval(updateGame, gameSpeed);
+        }
+
+        startGame();
+    </script>
+</body>
+</html>
